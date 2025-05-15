@@ -310,18 +310,33 @@ const crawler = new CheerioCrawler({
                             const paginationData = JSON.parse(match[1]);
 
                             if (!paginationData.isLastPage && paginationData.paginationToken) {
-                                if (!unlimitedMode && urlsFound >= maxUrlsCount) {
-                                    log.info(`URL limit (${maxUrlsCount}) reached, not enqueueing next LIST page.`);
+                                // LinkedIn suggests there might be more pages and provides a token.
+                                // Let's inspect and clean this token.
+                                let rawToken = paginationData.paginationToken;
+                                log.debug(`Original pagination token from LinkedIn: "${rawToken}"`);
+                                let cleanedToken = rawToken; // Initialize with original in case it's not a string or doesn't have #
+
+                                if (typeof rawToken === 'string' && rawToken.includes('#')) {
+                                    const oldToken = rawToken;
+                                    cleanedToken = rawToken.split('#')[0];
+                                    log.info(`Cleaned pagination token: from "${oldToken}" to "${cleanedToken}"`);
+                                }
+
+                                // Now, check if this cleaned token is a special "end" token like "0"
+                                // Also respect user-defined limits.
+                                if (cleanedToken === "0") {
+                                    log.info(`Pagination token (raw: "${rawToken}", cleaned: "${cleanedToken}") is "0". Treating as the end of pagination to prevent potential errors.`);
+                                } else if (!unlimitedMode && urlsFound >= maxUrlsCount) {
+                                    log.info(`URL limit (${maxUrlsCount}) reached, not enqueueing next LIST page (token was "${cleanedToken}").`);
                                 } else {
-                                    const paginationToken = paginationData.paginationToken;
-                                    log.info(`Found pagination token, enqueueing next LIST page.`);
-                                    log.debug(`Pagination token: ${paginationToken}`);
+                                    // Token is not "0" and limits not reached, proceed to enqueue.
+                                    log.info(`Valid pagination token (raw: "${rawToken}", cleaned: "${cleanedToken}") found, enqueueing next LIST page.`);
 
                                     let nextPageUrl;
                                     if (keyword) {
-                                        nextPageUrl = `https://www.linkedin.com/ad-library/searchPaginationFragment?${accountOwner ? 'accountOwner=' + encodeURIComponent(accountOwner) + '&' : ''}keyword=${encodeURIComponent(keyword)}&start=0&count=25&paginationToken=${paginationToken}`;
+                                        nextPageUrl = `https://www.linkedin.com/ad-library/searchPaginationFragment?${accountOwner ? 'accountOwner=' + encodeURIComponent(accountOwner) + '&' : ''}keyword=${encodeURIComponent(keyword)}&start=0&count=25&paginationToken=${encodeURIComponent(cleanedToken)}`;
                                     } else {
-                                        nextPageUrl = `https://www.linkedin.com/ad-library/searchPaginationFragment?accountOwner=${encodeURIComponent(accountOwner || '')}&start=0&count=25&paginationToken=${paginationToken}`;
+                                        nextPageUrl = `https://www.linkedin.com/ad-library/searchPaginationFragment?accountOwner=${encodeURIComponent(accountOwner || '')}&start=0&count=25&paginationToken=${encodeURIComponent(cleanedToken)}`;
                                     }
 
                                     await crawlerInstance.addRequests([{
@@ -330,12 +345,13 @@ const crawler = new CheerioCrawler({
                                             label: 'LIST',
                                             // priority: PRIORITY.LISTING // Temporarily removed for debugging
                                         },
-                                        uniqueKey: `list_${paginationToken}`, // Simpler unique key
+                                        uniqueKey: `list_${cleanedToken}`, // Simpler unique key using cleaned token
                                     }]);
                                     log.debug(`RequestHandler (LIST): crawlerInstance.addRequests finished for next page.`);
                                 }
                             } else {
-                                log.info('Reached last pagination page or no token found.');
+                                // LinkedIn explicitly says isLastPage=true OR no paginationToken was provided.
+                                log.info('Reached last pagination page (isLastPage=true or no token found in metadata).');
                             }
                         } catch (error) {
                             log.error('Error parsing pagination data', { error: (error as Error).message });
