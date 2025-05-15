@@ -1,0 +1,12 @@
+{
+	"actorSpecification": 1,
+	"name": "linkedin-ads-library-scraper",
+	"title": "LinkedIn Ads Library Scraper",
+	"description": "Scrape ads from the LinkedIn Ads Library for specified advertisers. Extract ad details including images, text, headlines, and more.",
+	"version": "0.1",
+	"meta": {
+		"templateId": "ts-crawlee-cheerio"
+	},
+	"input": "./input_schema.json",
+	"dockerfile": "./Dockerfile"
+}

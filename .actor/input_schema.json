@@ -1,0 +1,75 @@
+{
+    "title": "LinkedIn Ads Library Scraper",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "accountOwner": {
+            "title": "Account Owner",
+            "type": "string",
+            "description": "LinkedIn advertiser name or company to search for (e.g. 'seomonitor'). Either this or keyword must be provided.",
+            "editor": "textfield",
+            "prefill": "seomonitor"
+        },
+        "keyword": {
+            "title": "Keyword",
+            "type": "string",
+            "description": "Keyword to search for ads. Either this or accountOwner must be provided.",
+            "editor": "textfield"
+        },
+        "maxUrlsCount": {
+            "title": "Maximum URLs Count",
+            "type": "integer",
+            "description": "Maximum number of ad URLs to extract. Ignored if unlimitedMode is true.",
+            "default": 500,
+            "minimum": 1
+        },
+        "requestDelay": {
+            "title": "Request Delay (ms)",
+            "type": "integer",
+            "description": "Delay in milliseconds between requests to avoid rate limiting.",
+            "default": 3000,
+            "minimum": 0
+        },
+        "debugMode": {
+            "title": "Debug Mode",
+            "type": "boolean",
+            "description": "Enable detailed debug logging.",
+            "default": true
+        },
+        "unlimitedMode": {
+            "title": "Unlimited Mode",
+            "type": "boolean",
+            "description": "If enabled, scrape all available ads without a limit. This will ignore maxUrlsCount.",
+            "default": false
+        },
+        "scrapeAdDetails": {
+            "title": "Scrape Ad Details",
+            "type": "boolean",
+            "description": "If enabled, scrape detailed information about each ad (including advertiser, content, impressions, etc.). If disabled, only ad URLs will be collected.",
+            "default": true
+        },
+        "minDetailDelay": {
+            "title": "Minimum Detail Request Delay (ms)",
+            "type": "integer",
+            "description": "Minimum delay between ad detail page requests in milliseconds. Used for random delay calculation.",
+            "default": 3000,
+            "minimum": 1000
+        },
+        "maxDetailDelay": {
+            "title": "Maximum Detail Request Delay (ms)",
+            "type": "integer",
+            "description": "Maximum delay between ad detail page requests in milliseconds. Used for random delay calculation.",
+            "default": 5000,
+            "minimum": 1000
+        },
+        "maxDetailConcurrency": {
+            "title": "Maximum Concurrent Detail Requests",
+            "type": "integer",
+            "description": "Maximum number of concurrent ad detail page requests. Keep this low to avoid rate limiting.",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 10
+        }
+    },
+    "required": []
+}
