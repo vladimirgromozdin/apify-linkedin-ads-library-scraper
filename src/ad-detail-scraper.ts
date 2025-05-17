@@ -7,6 +7,47 @@ import { AdDetail, CountryImpression, CarouselItem } from './types.js';
 import { extractProfileId, parseImpressionRange, parsePercentage, generateContentFingerprint, cleanLinkedInUrl } from './utils.js';
 
 /**
+ * Converts a potentially relative URL to an absolute URL
+ * @param url The URL to convert
+ * @param baseUrl The base URL to use if the URL is relative
+ * @returns The absolute URL
+ */
+function ensureAbsoluteUrl(url: string, baseUrl: string): string {
+    if (!url) return '';
+    
+    // If URL is already absolute, return it
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    
+    // Handle different formats of relative URLs
+    if (url.startsWith('//')) {
+        // Protocol-relative URL
+        const baseUrlProtocol = baseUrl.split('://')[0];
+        return `${baseUrlProtocol}:${url}`;
+    }
+    
+    // Extract base domain from baseUrl
+    let baseDomain = '';
+    try {
+        const urlObj = new URL(baseUrl);
+        baseDomain = `${urlObj.protocol}//${urlObj.host}`;
+    } catch (e) {
+        log.warning(`Could not parse base URL: ${baseUrl}`, { error: e });
+        return url; // Return original URL if we can't parse the base URL
+    }
+    
+    // Handle absolute path (starts with /)
+    if (url.startsWith('/')) {
+        return `${baseDomain}${url}`;
+    }
+    
+    // Handle relative path
+    // For simplicity, we'll assume it's relative to the domain
+    return `${baseDomain}/${url}`;
+}
+
+/**
  * Scrapes ad details from a LinkedIn Ad Library detail page
  * @param html HTML content of the ad detail page
  * @param url URL of the ad detail page
@@ -168,24 +209,26 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
 
         if (videoElement.length > 0) {
             adDetail.adType = 'VIDEO';
-            adDetail.videoUrl = videoElement.attr('src') || '';
+            adDetail.videoUrl = ensureAbsoluteUrl(videoElement.attr('src') || '', url);
         } else if (carouselElement.length > 0 || carouselClass.length > 0) {
             adDetail.adType = 'CAROUSEL';
             adDetail.imageUrls = [];
-            adDetail.carouselItems = extractCarouselItems($);
+            adDetail.carouselItems = extractCarouselItems($, url);
             
             // Also collect image URLs separately for backward compatibility
             $('img.ad-preview__dynamic-dimensions-image').each((_, img) => {
                 const imgUrl = $(img).attr('src');
-                if (imgUrl && !imgUrl.includes('ghost-url')) adDetail.imageUrls?.push(imgUrl);
+                if (imgUrl && !imgUrl.includes('ghost-url')) {
+                    adDetail.imageUrls?.push(ensureAbsoluteUrl(imgUrl, url));
+                }
             });
         } else if (documentElement.length > 0) {
             adDetail.adType = 'DOCUMENT';
-            adDetail.documentUrl = documentElement.attr('src') || '';
+            adDetail.documentUrl = ensureAbsoluteUrl(documentElement.attr('src') || '', url);
         } else if (eventElement.length > 0) {
             adDetail.adType = 'EVENT';
             adDetail.eventName = eventElement.find('h3').text().trim();
-            adDetail.eventUrl = eventElement.find('a').attr('href') || '';
+            adDetail.eventUrl = ensureAbsoluteUrl(eventElement.find('a').attr('href') || '', url);
         } else if (messageAdCreativeType.length > 0 || messageAdClass.length > 0 || messageAdContent.length > 0 || aboutAdMessageLabel.length > 0) {
             adDetail.adType = 'MESSAGE';
             log.debug(`Detail Scraper: Identified message ad for Ad ID: ${adId}`);
@@ -245,17 +288,52 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             adDetail.adType = 'SINGLE_IMAGE';
             log.debug(`Detail Scraper: Identified single image ad for Ad ID: ${adId}`);
             
-            // Extract image URL
-            const imageUrl = singleImageContent.attr('src');
+            // Extract image URL - prioritize the src attribute as it contains the real image
+            let imageUrl = singleImageContent.attr('src');
+            
+            // LinkedIn sometimes has empty src or src with placeholder content
+            // Check if src exists and isn't empty before using alternatives
+            if (!imageUrl) {
+                // Try other possible attributes if src is missing
+                imageUrl = singleImageContent.attr('data-delayed-url') || 
+                           singleImageContent.attr('data-src');
+                
+                // Only use data-ghost-url as a last resort, as it's usually a placeholder
+                if (!imageUrl) {
+                    imageUrl = singleImageContent.attr('data-ghost-url');
+                }
+            }
+            
             if (imageUrl) {
-                adDetail.imageUrl = imageUrl;
+                adDetail.imageUrl = ensureAbsoluteUrl(imageUrl, url);
+                log.debug(`Detail Scraper: Extracted image URL for Ad ID ${adId}: ${adDetail.imageUrl}`);
+            } else {
+                log.warning(`Detail Scraper: Could not extract image URL for single image ad ID: ${adId}`);
             }
         } else if (textAdCreativeType.length > 0 || textAdClass.length > 0 || textAdContainer.length > 0) {
             adDetail.adType = 'TEXT';
             log.debug(`Detail Scraper: Identified text ad for Ad ID: ${adId}`);
         } else if (imageElement.length > 0) {
             adDetail.adType = 'SINGLE_IMAGE';
-            adDetail.imageUrl = imageElement.first().attr('src') || '';
+            
+            // Try multiple attributes for image element - prioritize src
+            const firstImg = imageElement.first();
+            let imageUrl = firstImg.attr('src');
+            
+            // Only use alternatives if src is completely missing
+            if (!imageUrl) {
+                // Try other attributes first
+                imageUrl = firstImg.attr('data-delayed-url') || 
+                           firstImg.attr('data-src');
+                           
+                // Use ghost-url as last resort
+                if (!imageUrl) {
+                    imageUrl = firstImg.attr('data-ghost-url');
+                }
+            }
+            
+            adDetail.imageUrl = ensureAbsoluteUrl(imageUrl || '', url);
+            log.debug(`Detail Scraper: Extracted image URL for Ad ID ${adId} (fallback method): ${adDetail.imageUrl}`);
         } else if (textOnlyElement.length > 0 && !imageElement.length && !videoElement.length) {
             adDetail.adType = 'TEXT';
         } else {
@@ -281,63 +359,59 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
 }
 
 /**
- * Extracts carousel items with their titles, images and links
+ * Extracts carousel items from the ad
  */
-function extractCarouselItems($: CheerioAPI): CarouselItem[] {
+function extractCarouselItems($: CheerioAPI, baseUrl: string): CarouselItem[] {
     const items: CarouselItem[] = [];
     
-    // Try different selectors for carousel items based on LinkedIn's varying HTML structures
-    const carouselItemSelectors = [
-        '.slide-list__list > div', // Modern carousel structure
-        '.ad-carousel-item', // Legacy carousel structure
-    ];
+    // Try both carousel item selectors
+    const carouselItems = $('.ad-carousel-item, .slide-list__list > div');
     
-    let carouselElements;
-    
-    // Find which selector works
-    for (const selector of carouselItemSelectors) {
-        const elements = $(selector);
-        if (elements.length > 0) {
-            carouselElements = elements;
-            break;
-        }
-    }
-    
-    if (!carouselElements || carouselElements.length === 0) {
-        return items;
-    }
-    
-    carouselElements.each((i, el) => {
-        const item: CarouselItem = {
-            position: i + 1
+    carouselItems.each((index, item) => {
+        const carouselItem: CarouselItem = {
+            position: index + 1
         };
         
-        // Try to get image
-        const img = $(el).find('img.ad-preview__dynamic-dimensions-image');
-        if (img.length > 0) {
-            item.imageUrl = img.attr('src') || undefined;
-            item.imageAlt = img.attr('alt') || undefined;
+        // Extract title if available
+        const titleEl = $(item).find('.carousel-card-title, h3');
+        if (titleEl.length > 0) {
+            carouselItem.title = titleEl.text().trim();
         }
         
-        // Try to get title
-        const title = $(el).find('.text-xs.font-semibold');
-        if (title.length > 0) {
-            item.title = title.text().trim();
-        }
-        
-        // Try to get link and clean it
-        const link = $(el).find('a[data-tracking-control-name="ad_library_ad_preview_carousel_item_image"], a[data-tracking-control-name="ad_library_ad_preview_carousel_item_title"]').first();
-        if (link.length > 0) {
-            const rawUrl = link.attr('href') || undefined;
-            if (rawUrl) {
-                // Clean the URL to remove tracking parameters
-                item.linkUrl = cleanLinkedInUrl(rawUrl);
+        // Extract image URL
+        const imgEl = $(item).find('img');
+        if (imgEl.length > 0) {
+            // Prioritize src attribute for carousel images
+            let imageUrl = imgEl.attr('src');
+            
+            // Only use alternatives if src is completely missing
+            if (!imageUrl) {
+                // Try other attributes first
+                imageUrl = imgEl.attr('data-delayed-url') || 
+                           imgEl.attr('data-src');
+                           
+                // Use ghost-url as last resort
+                if (!imageUrl) {
+                    imageUrl = imgEl.attr('data-ghost-url');
+                }
+            }
+            
+            carouselItem.imageUrl = ensureAbsoluteUrl(imageUrl || '', baseUrl);
+            carouselItem.imageAlt = imgEl.attr('alt') || '';
+            
+            // Log if we found an image
+            if (carouselItem.imageUrl) {
+                log.debug(`Extracted carousel image URL at position ${carouselItem.position}: ${carouselItem.imageUrl}`);
             }
         }
         
-        if (item.imageUrl || item.title || item.linkUrl) {
-            items.push(item);
+        // Extract link URL
+        const linkEl = $(item).find('a');
+        if (linkEl.length > 0) {
+            carouselItem.linkUrl = ensureAbsoluteUrl(linkEl.attr('href') || '', baseUrl);
         }
+        
+        items.push(carouselItem);
     });
     
     return items;
@@ -423,20 +497,77 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     // Main image
     const mainImage = $('.ad-preview img.ad-preview__dynamic-dimensions-image');
     if (mainImage.length > 0) {
-        const mainImageUrl = mainImage.attr('src');
-        if (mainImageUrl) imageUrls.push(mainImageUrl);
+        // Prioritize src attribute for the main image
+        let mainImageUrl = mainImage.attr('src');
+        
+        // Only use alternatives if src is completely missing
+        if (!mainImageUrl) {
+            // Try other attributes first
+            mainImageUrl = mainImage.attr('data-delayed-url') || 
+                           mainImage.attr('data-src');
+                           
+            // Use ghost-url as last resort
+            if (!mainImageUrl) {
+                mainImageUrl = mainImage.attr('data-ghost-url');
+            }
+        }
+        
+        if (mainImageUrl) {
+            // Convert to absolute URL
+            mainImageUrl = ensureAbsoluteUrl(mainImageUrl, adDetail.adDetailUrl);
+            imageUrls.push(mainImageUrl);
+            
+            // If we didn't find imageUrl before, set it now
+            if (!adDetail.imageUrl) {
+                adDetail.imageUrl = mainImageUrl;
+                log.debug(`extractAdContent: Set imageUrl from main image for Ad ID: ${adDetail.adId}`);
+            }
+        }
     }
     
     // Add all images
     $('.ad-preview img').each((_, el) => {
+        // First try src attribute
         const src = $(el).attr('src');
-        if (src && !imageUrls.includes(src) && !src.includes('ghost-url')) {
-            imageUrls.push(src);
+        if (src && !imageUrls.includes(src)) {
+            const absoluteUrl = ensureAbsoluteUrl(src, adDetail.adDetailUrl);
+            imageUrls.push(absoluteUrl);
+        } else {
+            // If src attribute not available, try others in priority order
+            const altSrc = $(el).attr('data-delayed-url') || 
+                          $(el).attr('data-src') || 
+                          $(el).attr('data-ghost-url');
+                          
+            if (altSrc && !imageUrls.includes(altSrc)) {
+                const absoluteUrl = ensureAbsoluteUrl(altSrc, adDetail.adDetailUrl);
+                imageUrls.push(absoluteUrl);
+            }
+        }
+        
+        // Check for srcset attribute (responsive images)
+        const srcset = $(el).attr('srcset');
+        if (srcset) {
+            // Extract highest resolution image from srcset
+            const srcsetParts = srcset.split(',');
+            for (const part of srcsetParts) {
+                const [url] = part.trim().split(' ');
+                if (url && !imageUrls.includes(url)) {
+                    const absoluteUrl = ensureAbsoluteUrl(url, adDetail.adDetailUrl);
+                    imageUrls.push(absoluteUrl);
+                    break; // Just take the first one for simplicity
+                }
+            }
         }
     });
     
     if (imageUrls.length > 0) {
         adDetail.imageUrls = imageUrls;
+        
+        // If we still don't have a main imageUrl but we found images, use the first one
+        if (!adDetail.imageUrl && imageUrls.length > 0) {
+            adDetail.imageUrl = imageUrls[0];
+            log.debug(`extractAdContent: Set imageUrl from imageUrls for Ad ID: ${adDetail.adId}`);
+        }
     }
     
     // Extract video URL if present

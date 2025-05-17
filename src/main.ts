@@ -32,7 +32,7 @@ const {
     keyword = '',
     maxUrlsCount = 500,
     debugMode = true,
-    unlimitedMode = false,
+    unlimitedMode = true,
     scrapeAdDetails = true,
     maxCrawlerConcurrency = 10,
 } = input;
