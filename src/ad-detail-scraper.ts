@@ -1,7 +1,7 @@
 /**
  * Ad detail scraper for LinkedIn Ads Library
  */
-import { CheerioAPI, load, Cheerio, Element as CheerioElement } from 'cheerio';
+import { CheerioAPI, load, Cheerio } from 'cheerio';
 import { log } from 'crawlee';
 import { AdDetail, CountryImpression, CarouselItem } from './types.js';
 import { extractProfileId, parseImpressionRange, parsePercentage, generateContentFingerprint, cleanLinkedInUrl } from './utils.js';
@@ -296,7 +296,7 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             // If adType is still UNKNOWN after all checks
             if (adDetail.adType === '' || adDetail.adType === 'UNKNOWN' ) { // Check if it's empty or already UNKNOWN
                  adDetail.adType = 'UNKNOWN';
-                 log.warning(`Detail Scraper: Could not determine ad type for Ad ID: ${adId} after all checks.`);
+                 log.warning(`Detail Scraper: Could not determine ad type for Ad ID: ${adDetail.adId} after all checks.`);
             }
         }
         
@@ -434,12 +434,12 @@ const extractAdId = (url: string): string => {
 function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     log.debug(`Extracting content for Ad ID: ${adDetail.adId}, Type: ${adDetail.adType}`);
 
-    const preserveLinksAndGetText = (element: Cheerio<Element>): string => {
+    const preserveLinksAndGetText = (element: Cheerio<any>): string => {
         // Create a clone to work with
         const clone = element.clone();
         
         // Replace all links with their text content
-        clone.find('a').each((_, el: Element) => {
+        clone.find('a').each((_, el) => {
             const linkText = $(el).text().trim();
             $(el).replaceWith(linkText);
         });
@@ -656,6 +656,7 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                     commentaryClickUrl = href;
                     return false; // Found a suitable primary commentary link
                 }
+                return true; // Continue iteration
             });
 
             if (commentaryClickUrl) {
@@ -668,6 +669,7 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                         adDetail.clickUrl = href;
                         return false; // Found a suitable link
                     }
+                    return true; // Continue iteration
                 });
             }
         }
@@ -1239,7 +1241,7 @@ function extractTargetingInfo($: CheerioAPI, adDetail: AdDetail): void {
 }
 
 // Helper function to find text content of a dt/dd pair, looking for specific dt text
-function findDdContent($, dtText: string): string | null {
+function findDdContent($: CheerioAPI, dtText: string): string | null {
     const dtElement = $(`dt:contains("${dtText}")`);
     if (dtElement.length > 0) {
         return dtElement.next('dd').text().trim() || null;
