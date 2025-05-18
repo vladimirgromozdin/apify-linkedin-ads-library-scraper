@@ -85,11 +85,20 @@ export interface AdDetail {
     imageUrls?: string[];
     videoUrl?: string;
     documentUrl?: string;
+    documentTitle?: string;
     clickUrl?: string;
     eventName?: string;
     eventUrl?: string;
     imageUrl?: string;
     carouselItems?: CarouselItem[];
+    
+    // New field for event ad details
+    eventDetails?: {
+        name: string;
+        time: string;
+        location: string;
+        url: string;
+    };
     
     // New field for message ad details
     messageDetails?: {
@@ -97,6 +106,7 @@ export interface AdDetail {
         messageContent: string;
         ctaText?: string;
         ctaUrl?: string;
+        buttonCtaText?: string;
         links?: {
             text: string;
             url: string;
