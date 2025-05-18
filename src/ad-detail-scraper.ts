@@ -177,32 +177,42 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             
             // Updated promoter image URL extraction
             let promoterImageUrl = '';
-            // Use common ancestor of promoterLink and promoter image link for scoping
-            const commonParentForPromoter = promoterLink.closest('.flex.items-center.px-1\.5.gap-1');
-            const promoterImageAnchor = commonParentForPromoter.find('a[data-tracking-control-name="ad_library_ad_preview_member_image"]');
+            // Use the container of promoter's text details to find the sibling image anchor.
+            // promoterDetailsContainer is promoterLink.closest('.flex.flex-col.self-center');
+            if (promoterDetailsContainer.length > 0) {
+                const outerSharedContainer = promoterDetailsContainer.parent(); // This parent should hold both text block and image link
+                if (outerSharedContainer.length > 0) {
+                    const promoterImageAnchor = outerSharedContainer.find('a[data-tracking-control-name="ad_library_ad_preview_member_image"]');
+                    if (promoterImageAnchor.length > 0) {
+                        const imgTag = promoterImageAnchor.find('img[alt="member logo"]'); // Ensure it's the member's logo
+                        if (imgTag.length > 0) {
+                            // Debug attributes of the found image tag
+                            const attrs: Record<string, string> = {};
+                            const el = imgTag[0];
+                            if (el.attribs) { Object.keys(el.attribs).forEach(key => { attrs[key] = el.attribs[key]; }); }
+                            log.debug(`Found promoter image tag for Ad ID: ${adId}`, { attributes: attrs });
 
-            if (promoterImageAnchor.length > 0) {
-                const imgTag = promoterImageAnchor.find('img[alt="member logo"]'); // Ensure it's the member's logo
-                if (imgTag.length > 0) {
-                    // Debug attributes of the found image tag
-                    const attrs: Record<string, string> = {};
-                    const el = imgTag[0];
-                    if (el.attribs) { Object.keys(el.attribs).forEach(key => { attrs[key] = el.attribs[key]; }); }
-                    log.debug(`Found promoter image tag for Ad ID: ${adId}`, { attributes: attrs });
-
-                    promoterImageUrl = ensureAbsoluteUrl(
-                        imgTag.attr('src') || // Prioritize src as per user's HTML example
-                        imgTag.attr('data-delayed-url') ||
-                        imgTag.attr('data-ghost-url') ||
-                        '',
-                        url // adDetail page URL, passed as 'url' to scrapeAdDetail, then to ensureAbsoluteUrl
-                    );
-                    log.debug(`Extracted promoter image URL: "${promoterImageUrl}" for Ad ID: ${adId}`);
+                            promoterImageUrl = ensureAbsoluteUrl(
+                                imgTag.attr('src') || // Prioritize src as per user's HTML example
+                                imgTag.attr('data-delayed-url') ||
+                                imgTag.attr('data-ghost-url') ||
+                                '',
+                                url // adDetail page URL, passed as 'url' to scrapeAdDetail, then to ensureAbsoluteUrl
+                            );
+                            log.debug(`Extracted promoter image URL: "${promoterImageUrl}" for Ad ID: ${adId}`);
+                        } else {
+                            log.debug(`No img[alt="member logo"] tag found within promoterImageAnchor (via outerSharedContainer) for Ad ID: ${adId}`);
+                        }
+                    } else {
+                        log.debug(`No promoter image anchor found within outerSharedContainer for Ad ID: ${adId}`);
+                    }
                 } else {
-                    log.debug(`No img[alt="member logo"] tag found within promoterImageAnchor for Ad ID: ${adId}`);
+                    log.debug(`Could not find outerSharedContainer for promoter image for Ad ID: ${adId}`);
                 }
             } else {
-                log.debug(`No promoter image anchor (a[data-tracking-control-name="ad_library_ad_preview_member_image"]) found relative to promoterLink for Ad ID: ${adId}.`);
+                // This case implies promoterDetailsContainer (used for headline) was not found,
+                // which is unlikely if promoterLink itself was found and the structure is consistent.
+                log.debug(`promoterDetailsContainer (for headline) was not found. Cannot find promoter image via relative parent for Ad ID: ${adId}.`);
             }
             
             adDetail.promoterDetails = {
@@ -434,6 +444,26 @@ const extractAdId = (url: string): string => {
 function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     log.debug(`Extracting content for Ad ID: ${adDetail.adId}, Type: ${adDetail.adType}`);
 
+    const LINKEDIN_PLACEHOLDER_IMG_URL = 'https://static.licdn.com/aero-v1/sc/h/9l8dv1r8a09nem281grvopn9l';
+
+    // Helper to identify placeholder images
+    // Cheerio.Element is the correct type for 'el' in .each() callbacks
+    function isPotentialPlaceholder(imgElement: Cheerio<any>, imgSrcAttr: string | undefined, baseDetailUrl: string): boolean {
+        if (!imgSrcAttr) return false;
+        const absoluteImgSrc = ensureAbsoluteUrl(imgSrcAttr, baseDetailUrl);
+
+        if (absoluteImgSrc === LINKEDIN_PLACEHOLDER_IMG_URL) {
+            const altText = imgElement.attr('alt')?.trim();
+            // Consider it a placeholder if src matches AND (alt is empty OR img has 'onerror' class)
+            if (altText === '' || imgElement.hasClass('onerror')) {
+                log.debug(`Identified placeholder image for Ad ID ${adDetail.adId}: src=${absoluteImgSrc}, alt="${altText}", hasErrorClass=${imgElement.hasClass('onerror')}`);
+                return true;
+            }
+            log.debug(`Image src matches placeholder URL (${absoluteImgSrc}) for Ad ID ${adDetail.adId}, but alt text ("${altText}") and no 'onerror' class. Treating as non-placeholder.`);
+        }
+        return false;
+    }
+
     const preserveLinksAndGetText = (element: Cheerio<any>): string => {
         // Create a clone to work with
         const clone = element.clone();
@@ -495,78 +525,97 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     const imageUrls: string[] = [];
     
     // Main image
-    const mainImage = $('.ad-preview img.ad-preview__dynamic-dimensions-image');
-    if (mainImage.length > 0) {
+    const mainImageElement = $('.ad-preview img.ad-preview__dynamic-dimensions-image').first();
+    if (mainImageElement.length > 0) {
         // Prioritize src attribute for the main image
-        let mainImageUrl = mainImage.attr('src');
+        let mainImageUrlSourceAttr = mainImageElement.attr('src');
         
         // Only use alternatives if src is completely missing
-        if (!mainImageUrl) {
+        if (!mainImageUrlSourceAttr) {
             // Try other attributes first
-            mainImageUrl = mainImage.attr('data-delayed-url') || 
-                           mainImage.attr('data-src');
+            mainImageUrlSourceAttr = mainImageElement.attr('data-delayed-url') || 
+                           mainImageElement.attr('data-src');
                            
             // Use ghost-url as last resort
-            if (!mainImageUrl) {
-                mainImageUrl = mainImage.attr('data-ghost-url');
+            if (!mainImageUrlSourceAttr) {
+                mainImageUrlSourceAttr = mainImageElement.attr('data-ghost-url');
             }
         }
         
-        if (mainImageUrl) {
-            // Convert to absolute URL
-            mainImageUrl = ensureAbsoluteUrl(mainImageUrl, adDetail.adDetailUrl);
-            imageUrls.push(mainImageUrl);
-            
-            // If we didn't find imageUrl before, set it now
-            if (!adDetail.imageUrl) {
-                adDetail.imageUrl = mainImageUrl;
-                log.debug(`extractAdContent: Set imageUrl from main image for Ad ID: ${adDetail.adId}`);
+        if (mainImageUrlSourceAttr) {
+            if (isPotentialPlaceholder(mainImageElement, mainImageUrlSourceAttr, adDetail.adDetailUrl)) {
+                log.debug(`Main image for Ad ID ${adDetail.adId} identified as placeholder. src: ${mainImageUrlSourceAttr}. Not using as adDetail.imageUrl or adding to imageUrls list.`);
+            } else {
+                const resolvedMainImageUrl = ensureAbsoluteUrl(mainImageUrlSourceAttr, adDetail.adDetailUrl);
+                // Add to imageUrls list (will be deduplicated later)
+                imageUrls.push(resolvedMainImageUrl);
+                
+                // If we didn't find adDetail.imageUrl before (e.g. from specific ad type logic), set it now
+                if (!adDetail.imageUrl) {
+                    adDetail.imageUrl = resolvedMainImageUrl;
+                    log.debug(`extractAdContent: Set adDetail.imageUrl from non-placeholder main image for Ad ID: ${adDetail.adId}`);
+                }
             }
         }
     }
     
-    // Add all images
+    // Add all images, filtering out placeholders
     $('.ad-preview img').each((_, el) => {
+        const imgElement = $(el);
+
+        // Skip if this element is the same as mainImageElement and already processed
+        if (mainImageElement.length > 0 && mainImageElement[0] === el) {
+            return; // Already handled by mainImageElement logic
+        }
+
         // First try src attribute
-        const src = $(el).attr('src');
-        if (src && !imageUrls.includes(src)) {
-            const absoluteUrl = ensureAbsoluteUrl(src, adDetail.adDetailUrl);
-            imageUrls.push(absoluteUrl);
+        let imgSrcAttr = imgElement.attr('src');
+        if (imgSrcAttr) {
+            if (!isPotentialPlaceholder(imgElement, imgSrcAttr, adDetail.adDetailUrl) && !imageUrls.includes(ensureAbsoluteUrl(imgSrcAttr, adDetail.adDetailUrl))) {
+                imageUrls.push(ensureAbsoluteUrl(imgSrcAttr, adDetail.adDetailUrl));
+            }
         } else {
             // If src attribute not available, try others in priority order
-            const altSrc = $(el).attr('data-delayed-url') || 
-                          $(el).attr('data-src') || 
-                          $(el).attr('data-ghost-url');
+            imgSrcAttr = imgElement.attr('data-delayed-url') || 
+                          imgElement.attr('data-src') || 
+                          imgElement.attr('data-ghost-url');
                           
-            if (altSrc && !imageUrls.includes(altSrc)) {
-                const absoluteUrl = ensureAbsoluteUrl(altSrc, adDetail.adDetailUrl);
-                imageUrls.push(absoluteUrl);
+            if (imgSrcAttr && !isPotentialPlaceholder(imgElement, imgSrcAttr, adDetail.adDetailUrl) && !imageUrls.includes(ensureAbsoluteUrl(imgSrcAttr, adDetail.adDetailUrl))) {
+                imageUrls.push(ensureAbsoluteUrl(imgSrcAttr, adDetail.adDetailUrl));
             }
         }
         
-        // Check for srcset attribute (responsive images)
-        const srcset = $(el).attr('srcset');
+        // Check for srcset attribute (responsive images) - also apply placeholder check
+        const srcset = imgElement.attr('srcset');
         if (srcset) {
-            // Extract highest resolution image from srcset
             const srcsetParts = srcset.split(',');
             for (const part of srcsetParts) {
-                const [url] = part.trim().split(' ');
-                if (url && !imageUrls.includes(url)) {
-                    const absoluteUrl = ensureAbsoluteUrl(url, adDetail.adDetailUrl);
-                    imageUrls.push(absoluteUrl);
-                    break; // Just take the first one for simplicity
+                const [urlCandidate] = part.trim().split(' ');
+                if (urlCandidate && !isPotentialPlaceholder(imgElement, urlCandidate, adDetail.adDetailUrl) && !imageUrls.includes(ensureAbsoluteUrl(urlCandidate, adDetail.adDetailUrl))) {
+                    imageUrls.push(ensureAbsoluteUrl(urlCandidate, adDetail.adDetailUrl));
+                    break; // Just take the first valid one from srcset for simplicity
                 }
             }
         }
     });
     
     if (imageUrls.length > 0) {
-        adDetail.imageUrls = imageUrls;
+        adDetail.imageUrls = [...new Set(imageUrls)]; // Assign unique, non-placeholder URLs
         
-        // If we still don't have a main imageUrl but we found images, use the first one
-        if (!adDetail.imageUrl && imageUrls.length > 0) {
-            adDetail.imageUrl = imageUrls[0];
-            log.debug(`extractAdContent: Set imageUrl from imageUrls for Ad ID: ${adDetail.adId}`);
+        // If primary adDetail.imageUrl is still not set (e.g. main image was placeholder or not found)
+        // and we have valid images in the list, use the first one.
+        if (!adDetail.imageUrl && adDetail.imageUrls.length > 0) {
+            adDetail.imageUrl = adDetail.imageUrls[0];
+            log.debug(`extractAdContent: Set adDetail.imageUrl from filtered imageUrls list for Ad ID: ${adDetail.adId}`);
+        }
+    } else {
+        // If imageUrls list is empty, it means all found images were placeholders or no images were found.
+        // Ensure adDetail.imageUrl is undefined if it wasn't set by a specific (trusted) ad type logic.
+        // The current flow means if adDetail.imageUrl was set by mainImageElement, it was already checked.
+        // If adDetail.imageUrl was set by ad-type specific logic (e.g. EVENT), that logic needs its own placeholder check.
+        log.debug(`extractAdContent: imageUrls list is empty (all placeholders or no images) for Ad ID: ${adDetail.adId}. adDetail.imageUrl remains: ${adDetail.imageUrl}`);
+        if (adDetail.imageUrls && adDetail.imageUrls.length === 0) { // If list was initialized but ended up empty
+             adDetail.imageUrls = undefined; // Explicitly set to undefined if empty
         }
     }
     
@@ -883,8 +932,21 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
             // Image URL
             const eventImageElement = $('.ad-preview[data-creative-type="SPONSORED_UPDATE_EVENT"] img.ad-preview__dynamic-dimensions-image');
             if (eventImageElement.length > 0) {
-                adDetail.imageUrl = ensureAbsoluteUrl(eventImageElement.attr('src') || '', adDetail.adDetailUrl);
-                log.debug(`Detail Scraper: Event Image URL: ${adDetail.imageUrl} for Ad ID: ${adDetail.adId}`);
+                const eventImgSrc = eventImageElement.attr('src');
+                if (eventImgSrc) {
+                    if (isPotentialPlaceholder(eventImageElement, eventImgSrc, adDetail.adDetailUrl)) {
+                        log.debug(`Detail Scraper: Event image for Ad ID ${adDetail.adId} identified as placeholder. Src: ${eventImgSrc}`);
+                        // adDetail.imageUrl remains undefined or as previously set
+                    } else {
+                        adDetail.imageUrl = ensureAbsoluteUrl(eventImgSrc, adDetail.adDetailUrl);
+                        log.debug(`Detail Scraper: Event Image URL: ${adDetail.imageUrl} for Ad ID: ${adDetail.adId}`);
+                        // Add to general imageUrls list if not already there (might be redundant if general scan picks it up)
+                        if (adDetail.imageUrl && (!adDetail.imageUrls || !adDetail.imageUrls.includes(adDetail.imageUrl))) {
+                            if (!adDetail.imageUrls) adDetail.imageUrls = [];
+                            adDetail.imageUrls.push(adDetail.imageUrl);
+                        }
+                    }
+                }
             } else {
                 log.debug(`Detail Scraper: No specific event image found for Ad ID: ${adDetail.adId}. Fallback to general image might occur.`);
             }
@@ -1053,11 +1115,39 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     }
 
     // Fallback for image URL if not set by specific ad type logic and not a text ad
-    if (!adDetail.imageUrl && adDetail.adType !== 'TEXT' && adDetail.adType !== 'MESSAGE' && adDetail.adType !== 'EVENT') { // Don't overwrite if EVENT already got it
-        const generalImageElement = $('.ad-preview-image img, .ad-image__image img, .feed-shared-article__image img, .feed-shared-event__image img, .profile-photo-edit__preview, .ivm-view-attr__img--centered img');
-        if (generalImageElement.length > 0) {
-            adDetail.imageUrl = ensureAbsoluteUrl(generalImageElement.first().attr('src') || '', adDetail.adDetailUrl);
-            log.debug(`Detail Scraper: Fallback Image URL: ${adDetail.imageUrl} for Ad ID: ${adDetail.adId}`);
+    if (!adDetail.imageUrl && adDetail.adType !== 'TEXT' && adDetail.adType !== 'MESSAGE') { // EVENT adType imageUrl is handled within its case
+        const generalImageElements = $('.ad-preview-image img, .ad-image__image img, .feed-shared-article__image img, .feed-shared-event__image img, .profile-photo-edit__preview, .ivm-view-attr__img--centered img');
+        let foundFallbackImage = false;
+        generalImageElements.each((_, el) => {
+            const imgElement = $(el);
+            // Prioritize src, then data-delayed-url, etc. for fallback
+            const imgSrcAttr = imgElement.attr('src') || imgElement.attr('data-delayed-url') || imgElement.attr('data-ghost-url');
+            if (imgSrcAttr) {
+                if (!isPotentialPlaceholder(imgElement, imgSrcAttr, adDetail.adDetailUrl)) {
+                    adDetail.imageUrl = ensureAbsoluteUrl(imgSrcAttr, adDetail.adDetailUrl);
+                    log.debug(`Detail Scraper: Fallback Image URL set to non-placeholder: ${adDetail.imageUrl} for Ad ID: ${adDetail.adId}`);
+                    // Add to general imageUrls list if not already there
+                     if (adDetail.imageUrl && (!adDetail.imageUrls || !adDetail.imageUrls.includes(adDetail.imageUrl))) {
+                        if (!adDetail.imageUrls) adDetail.imageUrls = [];
+                        adDetail.imageUrls.push(adDetail.imageUrl);
+                     }
+                    foundFallbackImage = true;
+                    return false; // Break loop, found a non-placeholder
+                } else {
+                    log.debug(`Detail Scraper: Fallback image candidate was a placeholder. src: ${imgSrcAttr} for Ad ID: ${adDetail.adId}`);
+                }
+            }
+            return true; // Continue loop
+        });
+        if (!foundFallbackImage) {
+            log.debug(`Detail Scraper: Fallback Image URL could not be set (all candidates were placeholders or no images found) for Ad ID: ${adDetail.adId}`);
+            // if adDetail.imageUrl was somehow set to a placeholder by a path not covered, this is a spot to ensure it's undefined.
+            // However, the logic aims to prevent setting it to placeholder in the first place.
+            // If adDetail.imageUrls is now potentially just placeholders, ensure it's cleaned or undefined
+            if (adDetail.imageUrls && adDetail.imageUrls.every(url => isPotentialPlaceholder($(`img[src="${url}"]`),url,adDetail.adDetailUrl))) { // This check is a bit complex here
+                 // Simpler: if no primary imageUrl found, and list is empty or all placeholders, ensure list is undefined if empty.
+                 if (adDetail.imageUrls && adDetail.imageUrls.length === 0) adDetail.imageUrls = undefined;
+            }
         }
     }
 
