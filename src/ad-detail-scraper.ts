@@ -113,7 +113,15 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
                 if (advertiserImageLink.length > 0) {
                     const logoImg = advertiserImageLink.find('img');
                     if (logoImg.length > 0) {
-                        adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoImg.attr('src') || '', url);
+                        let logoSrc = logoImg.attr('src');
+                        if (!logoSrc) { // Fallback if src is missing or empty
+                            logoSrc = logoImg.attr('data-delayed-url') ||
+                                      logoImg.attr('data-src') ||
+                                      logoImg.attr('data-ghost-url');
+                        }
+                        if (logoSrc) { // Ensure we have a source before assigning
+                            adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrc, url);
+                        }
                     }
                 }
                 break;
@@ -128,7 +136,15 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             if (advertiserLogoAnchor.length > 0) {
                 const advertiserLogo = advertiserLogoAnchor.find('img');
                 if (advertiserLogo.length > 0) {
-                    adDetail.advertiserLogoUrl = ensureAbsoluteUrl(advertiserLogo.attr('src') || '', url);
+                    let logoSrc = advertiserLogo.attr('src');
+                    if (!logoSrc) { // Fallback if src is missing or empty
+                        logoSrc = advertiserLogo.attr('data-delayed-url') ||
+                                  advertiserLogo.attr('data-src') ||
+                                  advertiserLogo.attr('data-ghost-url');
+                    }
+                    if (logoSrc) { // Ensure we have a source before assigning
+                        adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrc, url);
+                    }
                     const logoAlt = advertiserLogo.attr('alt');
                     if (logoAlt && logoAlt.includes('logo')) {
                         adDetail.advertiserName = logoAlt.replace(' logo', '').trim(); // Fallback for name
@@ -790,9 +806,14 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                     if (!adDetail.advertiserLogoUrl) {
                         const logoImgEl = contentContainer.find('a[data-tracking-control-name="ad_library_ad_preview_advertiser_image"] img');
                         if (logoImgEl.length > 0) {
-                            const logoSrc = logoImgEl.attr('src');
-                            if (logoSrc) {
-                                adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrc, adDetail.adDetailUrl);
+                            let logoSrcAttr = logoImgEl.attr('src');
+                            if (!logoSrcAttr) { // Fallback if src is missing or empty
+                                logoSrcAttr = logoImgEl.attr('data-delayed-url') ||
+                                              logoImgEl.attr('data-src') ||
+                                              logoImgEl.attr('data-ghost-url');
+                            }
+                            if (logoSrcAttr) { // Ensure we have a source before assigning
+                                adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrcAttr, adDetail.adDetailUrl);
                                 log.debug(`Detail Scraper: SPOTLIGHT - Fallback advertiserLogoUrl extracted: ${adDetail.advertiserLogoUrl} for Ad ID: ${adDetail.adId}`);
                             }
                         }
@@ -902,9 +923,14 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                         // The logo within FOLLOW_COMPANY_V2 is inside the .container-lined, then .flex.gap-x-2, then the 'a' tag
                         const logoImgEl = contentContainer.find('a[data-tracking-control-name="ad_library_ad_preview_advertiser_image"] img');
                         if (logoImgEl.length > 0) {
-                            const logoSrc = logoImgEl.attr('src');
-                            if (logoSrc) {
-                                adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrc, adDetail.adDetailUrl);
+                            let logoSrcAttr = logoImgEl.attr('src');
+                            if (!logoSrcAttr) { // Fallback if src is missing or empty
+                                logoSrcAttr = logoImgEl.attr('data-delayed-url') ||
+                                              logoImgEl.attr('data-src') ||
+                                              logoImgEl.attr('data-ghost-url');
+                            }
+                            if (logoSrcAttr) { // Ensure we have a source before assigning
+                                adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrcAttr, adDetail.adDetailUrl);
                                 log.debug(`Detail Scraper: FOLLOW_COMPANY - Fallback advertiserLogoUrl extracted: ${adDetail.advertiserLogoUrl} for Ad ID: ${adDetail.adId}`);
                             }
                         }
