@@ -639,7 +639,19 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
     const videoContainer = $('.share-native-video');
     if (videoContainer.length > 0) {
         let extractedVideoUrl: string | undefined;
-        const videoSourcesAttr = videoContainer.attr('data-sources');
+        let extractedVideoThumbnailUrl: string | undefined;
+        
+        // First try to get data-sources from the video player div
+        const videoPlayerDiv = videoContainer.find('.share-native-video__node');
+        let videoSourcesAttr = videoPlayerDiv.attr('data-sources');
+        
+        // If not found on player div, try the video tag itself
+        if (!videoSourcesAttr) {
+            const videoTag = videoContainer.find('video');
+            if (videoTag.length > 0) {
+                videoSourcesAttr = videoTag.attr('data-sources');
+            }
+        }
 
         if (videoSourcesAttr) {
             try {
@@ -666,8 +678,27 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
             }
         }
 
+        // Extract video thumbnail/poster URL
+        if (videoPlayerDiv.length > 0) {
+            extractedVideoThumbnailUrl = videoPlayerDiv.attr('data-poster-url');
+        }
+        
+        if (!extractedVideoThumbnailUrl) {
+            const videoTag = videoContainer.find('video');
+            if (videoTag.length > 0) {
+                extractedVideoThumbnailUrl = videoTag.attr('poster') || videoTag.attr('data-poster-url');
+            }
+        }
+
         if (extractedVideoUrl) {
             adDetail.videoUrl = ensureAbsoluteUrl(extractedVideoUrl, adDetail.adDetailUrl);
+            
+            // Also capture video thumbnail if available
+            if (extractedVideoThumbnailUrl) {
+                adDetail.videoThumbnailUrl = ensureAbsoluteUrl(extractedVideoThumbnailUrl, adDetail.adDetailUrl);
+                log.debug(`extractAdContent: Extracted video thumbnail URL for Ad ID ${adDetail.adId}: ${adDetail.videoThumbnailUrl}`);
+            }
+            
              // If adType wasn't set to VIDEO by data-creative-type, this is another indicator
             if (adDetail.adType === 'UNKNOWN' || !adDetail.adType) {
                 adDetail.adType = 'VIDEO';

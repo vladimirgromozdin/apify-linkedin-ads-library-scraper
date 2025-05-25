@@ -84,6 +84,7 @@ export interface AdDetail {
     ctaText?: string;
     imageUrls?: string[];
     videoUrl?: string;
+    videoThumbnailUrl?: string;
     documentUrl?: string;
     documentTitle?: string;
     clickUrl?: string;
