@@ -1208,7 +1208,7 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
 
                 if (senderName) {
                     adDetail.messageDetails.senderName = senderName;
-                    // Populate promoterDetails as well
+                    // Populate promoterDetails as well - message ads always have a personal messenger
                     adDetail.promoterDetails = {
                         promoterName: senderName,
                         promoterProfileUrl: '', 
@@ -1216,8 +1216,8 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                         promoterImageUrl: senderImageUrl,
                         // promoterHeadline is not available directly here
                     };
-                     // If this is a message ad with a specific sender, it's effectively 'THOUGHT_LEADERSHIP'
-                    adDetail.promotionType = 'THOUGHT_LEADERSHIP';
+                    // Message ads are company promotions delivered through personal channels
+                    adDetail.promotionType = 'COMPANY';
                 }
             }
 
