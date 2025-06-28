@@ -104,10 +104,9 @@ const SAVE_METADATA_EVERY_N_PAGES = 20;
 
 // Create a session pool for managing sessions
 const sessionPool = await SessionPool.open({
-    maxPoolSize: maxCrawlerConcurrency * 3,
+    maxPoolSize: maxCrawlerConcurrency * 20,
     sessionOptions: {
-        maxUsageCount: 50,
-        // maxSessionAgeSecs: 300, // Removed for now due to persistent linter issue
+        maxUsageCount: 100,
     },
 });
 
