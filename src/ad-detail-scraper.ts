@@ -257,6 +257,7 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
         const textAdCreativeType = $('[data-creative-type="TEXT_AD"]');
         const textAdClass = $('.text-ad-preview');
         const textAdContainer = $('.container-lined:contains("TAM-Rechner")'); // Additional check for specific text ad pattern
+        const aboutAdTextLabel = $('p.text-sm.mb-1.text-color-text:contains("Text Ad")'); // Text Ad label in "About the ad" section
 
         // Message ad selectors (Sponsored InMails)
         const messageAdCreativeType = $('[data-creative-type="SPONSORED_INMAILS"]');
@@ -297,7 +298,7 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             adDetail.adType = 'EVENT';
         } else if (creativeType === 'SPONSORED_STATUS_UPDATE' || aboutAdSingleImageLabel.length > 0 || (singleImageContent.length > 0 && sponsoredContentHeadline.length > 0)) {
             adDetail.adType = 'SINGLE_IMAGE';
-        } else if (creativeType === 'TEXT_AD' || textAdClass.length > 0 || textAdContainer.length > 0) {
+        } else if (creativeType === 'TEXT_AD' || textAdClass.length > 0 || textAdContainer.length > 0 || aboutAdTextLabel.length > 0) {
             adDetail.adType = 'TEXT';
         } 
         // --- Fallback Ad Type Detection (if data-creative-type was not specific or absent) ---
@@ -1036,6 +1037,64 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
         }
         case 'DOCUMENT': {
             // Document URL is already extracted in extractAdContent
+            break;
+        }
+        case 'TEXT': {
+            log.debug(`Detail Scraper: Extracting TEXT specific content for Ad ID: ${adDetail.adId}`);
+            
+            // Look for the text ad container with the new format
+            const textAdContentContainer = $('.container-lined');
+            
+            if (textAdContentContainer.length > 0) {
+                // Extract headline/title from the link text
+                const titleLinkEl = textAdContentContainer.find('a[data-tracking-control-name="ad_library_ad_preview_text_ad_content_link"]');
+                if (titleLinkEl.length > 0) {
+                    adDetail.headline = titleLinkEl.text().trim();
+                    adDetail.clickUrl = ensureAbsoluteUrl(titleLinkEl.attr('href') || '', adDetail.adDetailUrl);
+                    log.debug(`Detail Scraper: TEXT - Headline: "${adDetail.headline}", URL: "${adDetail.clickUrl}" for Ad ID: ${adDetail.adId}`);
+                }
+                
+                // Extract description text (the text after the " - " separator)
+                const textContentEl = textAdContentContainer.find('.font-semibold.text-sm.break-words.leading-\\[18px\\]');
+                if (textContentEl.length > 0) {
+                    const fullText = textContentEl.text().trim();
+                    // Split on " - " to separate headline from description
+                    const parts = fullText.split(' - ');
+                    if (parts.length > 1) {
+                        // The description is everything after the first " - "
+                        adDetail.adCopy = parts.slice(1).join(' - ').trim();
+                        log.debug(`Detail Scraper: TEXT - AdCopy: "${adDetail.adCopy}" for Ad ID: ${adDetail.adId}`);
+                    } else {
+                        // If no separator found, use the full text as headline if not already set
+                        if (!adDetail.headline) {
+                            adDetail.headline = fullText;
+                        }
+                    }
+                }
+                
+                // Extract small logo image
+                const logoImageEl = textAdContentContainer.find('a[data-tracking-control-name="ad_library_ad_preview_text_ad_content_logo"] img');
+                if (logoImageEl.length > 0) {
+                    let logoSrc = logoImageEl.attr('src');
+                    if (!logoSrc) {
+                        logoSrc = logoImageEl.attr('data-delayed-url') || 
+                                  logoImageEl.attr('data-src') ||
+                                  logoImageEl.attr('data-ghost-url');
+                    }
+                    if (logoSrc) {
+                        adDetail.imageUrl = ensureAbsoluteUrl(logoSrc, adDetail.adDetailUrl);
+                        // Add to imageUrls array if not already there
+                        if (!adDetail.imageUrls) adDetail.imageUrls = [];
+                        if (!adDetail.imageUrls.includes(adDetail.imageUrl)) {
+                            adDetail.imageUrls.push(adDetail.imageUrl);
+                        }
+                        log.debug(`Detail Scraper: TEXT - Logo Image URL: ${adDetail.imageUrl} for Ad ID: ${adDetail.adId}`);
+                    }
+                }
+                
+            } else {
+                log.warning(`Detail Scraper: TEXT - Could not find text ad container for Ad ID: ${adDetail.adId}`);
+            }
             break;
         }
         case 'EVENT': {
