@@ -1221,50 +1221,78 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
                 }
             }
 
-            // Message Content
+            // Message Content - Handle both the content element and spinmail elements
             const messageContentEl = messagePreviewBase.find('.sponsored-message__content');
+            const spinmailElements = messagePreviewBase.find('.spinmail-quill-editor__spin-break');
             let extractedMessageContent = '';
-            if (messageContentEl.length > 0) {
+            
+            // Try to extract from the content element first
+            if (messageContentEl.length > 0 && messageContentEl.children().length > 0) {
                 const tempDiv = $('<div></div>').append(messageContentEl.clone().children());
-
                 tempDiv.find('br').replaceWith('\n');
                 tempDiv.find('li').each((_, li) => {
                     $(li).prepend('    * ').append('\n');
                 });
-                tempDiv.find('p').append('\n'); // Add newline after each paragraph
-
-                // Consolidate text, then clean up for final assignment
+                tempDiv.find('p').append('\n');
                 extractedMessageContent = tempDiv.text();
-                // Replace multiple newlines (and those with only spaces) with a single newline
                 extractedMessageContent = extractedMessageContent.replace(/(\n\s*)+/g, '\n').trim();
-
-
+            }
+            
+            // If content element is empty or doesn't have children, try spinmail elements
+            if (!extractedMessageContent && spinmailElements.length > 0) {
+                const contentParts: string[] = [];
+                spinmailElements.each((_, el) => {
+                    const $el = $(el);
+                    let text = $el.text().trim();
+                    if (text && text !== '' && !text.match(/^\s*$/)) {
+                        contentParts.push(text);
+                    }
+                });
+                extractedMessageContent = contentParts.join('\n\n');
+            }
+            
+            if (extractedMessageContent) {
                 adDetail.messageDetails.messageContent = extractedMessageContent;
                 adDetail.adCopy = extractedMessageContent; // Also populate the main adCopy field
+            }
 
-                // Extract links and the specific in-message CTA
-                messageContentEl.find('a').each((_, el) => {
+            // Extract links - check both content element and spinmail elements
+            const linkContainers = messageContentEl.length > 0 && messageContentEl.children().length > 0 
+                ? [messageContentEl] 
+                : spinmailElements.length > 0 
+                    ? [messagePreviewBase] // Search in the whole preview base to catch spinmail links
+                    : [messageContentEl]; // Fallback to original logic
+
+            linkContainers.forEach(container => {
+                container.find('a').each((_, el) => {
                     const linkText = $(el).text().trim();
                     const linkUrl = $(el).attr('href');
                     if (linkText && linkUrl) {
                         const absLinkUrl = ensureAbsoluteUrl(linkUrl, adDetail.adDetailUrl);
-                        adDetail.messageDetails!.links!.push({ text: linkText, url: absLinkUrl });
+                        
+                        // Avoid duplicates
+                        const exists = adDetail.messageDetails!.links!.some(link => 
+                            link.url === absLinkUrl && link.text === linkText
+                        );
+                        
+                        if (!exists) {
+                            adDetail.messageDetails!.links!.push({ text: linkText, url: absLinkUrl });
 
-                        if (!adDetail.messageDetails!.ctaText && $(el).attr('rel') === 'noopener') {
-                            adDetail.messageDetails!.ctaText = linkText;
-                            adDetail.messageDetails!.ctaUrl = absLinkUrl;
+                            if (!adDetail.messageDetails!.ctaText && $(el).attr('rel') === 'noopener') {
+                                adDetail.messageDetails!.ctaText = linkText;
+                                adDetail.messageDetails!.ctaUrl = absLinkUrl;
+                            }
                         }
                     }
                 });
-                 // Fallback for message CTA if not found via rel="noopener" but user mentioned specific text
-                if (!adDetail.messageDetails!.ctaText && adDetail.messageDetails!.links!.length > 0) {
-                    const specificCtaFromUser = "Book a free consultation";
-                    const userCta = adDetail.messageDetails!.links!.find(l => l.text === specificCtaFromUser);
-                    if (userCta) {
-                        adDetail.messageDetails!.ctaText = userCta.text;
-                        adDetail.messageDetails!.ctaUrl = userCta.url;
-                    }
-                }
+            });
+            
+            // Fallback for message CTA if not found via rel="noopener"
+            if (!adDetail.messageDetails!.ctaText && adDetail.messageDetails!.links!.length > 0) {
+                // Use the first link as the primary CTA
+                const firstLink = adDetail.messageDetails!.links![0];
+                adDetail.messageDetails!.ctaText = firstLink.text;
+                adDetail.messageDetails!.ctaUrl = firstLink.url;
             }
             
             // Extract Button CTA text (e.g., "Schedule 15-min call")
