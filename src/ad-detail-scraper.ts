@@ -277,6 +277,9 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
         // ADDED: Selector for "Spotlight Ad" text in "About the ad" section
         const aboutAdSpotlightLabel = $('div.pt-3.px-3.pb-2 p.text-sm.mb-1.text-color-text:contains("Spotlight Ad")');
 
+        // ADDED: Selector for "Job Ad" text in "About the ad" section
+        const aboutAdJobLabel = $('div.pt-3.px-3.pb-2 p.text-sm.mb-1.text-color-text:contains("Job Ad")');
+
         // --- Ad Type Detection based on data-creative-type ---
         const creativeType = $('.ad-preview').attr('data-creative-type');
         log.debug(`Detail Scraper: Detected data-creative-type: ${creativeType} for Ad ID: ${adId}`);
@@ -285,6 +288,8 @@ export async function scrapeAdDetail(html: string, url: string): Promise<AdDetai
             adDetail.adType = 'FOLLOW_COMPANY';
         } else if (creativeType === 'SPOTLIGHT_V2' || aboutAdSpotlightLabel.length > 0) { // ADDED: Spotlight Ad detection
             adDetail.adType = 'SPOTLIGHT';
+        } else if (creativeType === 'JOBS_V2' || aboutAdJobLabel.length > 0) { // ADDED: Job Ad detection
+            adDetail.adType = 'JOB';
         } else if (creativeType === 'SPONSORED_VIDEO') {
             adDetail.adType = 'VIDEO';
             // Video URL will be extracted in extractAdContent
@@ -781,6 +786,7 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
         // const eventElement = $('.ad-preview-event-info'); // Already defined, consider if SPONSORED_UPDATE_EVENT is primary
         const textOnlyElement = $('.ad-preview-text');
         const messageAdContent = $('.sponsored-message__content'); // for message ads specifically
+        const jobAdElement = $('.container-raised .flex.flex-col.px-3.py-1\\.5.m-1\\.5.gap-y-1\\.5.text-center.items-center'); // for job ads
 
         if (videoElement.length > 0) {
             adDetail.adType = 'VIDEO';
@@ -790,6 +796,8 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
             adDetail.adType = 'DOCUMENT';
         } else if ($('.ad-preview[data-creative-type="SPONSORED_UPDATE_EVENT"]').length > 0) { // Check specifically for event ad structure
             adDetail.adType = 'EVENT';
+        } else if (jobAdElement.length > 0) { // Check for job ad structure
+            adDetail.adType = 'JOB';
         } else if (imageElement.length > 0) {
             // This is a broad category, could be SINGLE_IMAGE or part of another type
             // We'll refine this based on other elements or lack thereof
@@ -1032,6 +1040,97 @@ function extractAdContent($: CheerioAPI, adDetail: AdDetail): void {
 
             } else {
                 log.warning(`Detail Scraper: FOLLOW_COMPANY - Could not find content container for Ad ID: ${adDetail.adId}`);
+            }
+            break;
+        }
+        case 'JOB': {
+            log.debug(`Detail Scraper: Extracting JOB specific content for Ad ID: ${adDetail.adId}`);
+            
+            // Try multiple approaches to find the Job Ad content
+            let contentContainer;
+            
+            // Approach 1: Look for the specific ad preview container with data-creative-type
+            const jobAdPreview = $('.ad-preview[data-creative-type="JOBS_V2"]');
+            if (jobAdPreview.length > 0) {
+                contentContainer = jobAdPreview.find('.container-raised .flex.flex-col.px-3.py-1\\.5.m-1\\.5.gap-y-1\\.5.text-center.items-center');
+                log.debug(`Detail Scraper: JOB - Found container via data-creative-type for Ad ID: ${adDetail.adId}`);
+            }
+            
+            // Approach 2: Fallback - Look for container patterns with Job Ad structure
+            if (!contentContainer || contentContainer.length === 0) {
+                // Look for container-raised that has the typical Job Ad structure
+                const containerCandidates = $('.container-raised');
+                containerCandidates.each((_, el) => {
+                    const candidate = $(el);
+                    // Check if this container has the Job Ad pattern:
+                    // - Contains an h2 with specific job ad classes
+                    // - Contains a CTA button with the specific tracking control name
+                    // - Has text-center and items-center classes structure
+                    const innerContainer = candidate.find('.flex.flex-col.px-3.py-1\\.5.m-1\\.5.gap-y-1\\.5.text-center.items-center');
+                    if (innerContainer.length > 0 && 
+                        innerContainer.find('h2.text-sm.leading-\\[18px\\].text-color-text').length > 0 && 
+                        innerContainer.find('a[data-tracking-control-name="ad_library_ad_detail_cta"]').length > 0) {
+                        contentContainer = innerContainer;
+                        log.debug(`Detail Scraper: JOB - Found container via pattern matching for Ad ID: ${adDetail.adId}`);
+                        return false; // Break the each loop
+                    }
+                    return true; // Continue the each loop
+                });
+            }
+
+            if (contentContainer && contentContainer.length > 0) {
+                // Job Ad Headline/Message - specific selector for job ads
+                const headlineSelectors = [
+                    'h2.text-sm.leading-\\[18px\\].text-color-text.max-w-\\[276px\\].break-words.w-full',
+                    'h2.text-sm.leading-\\[18px\\].text-color-text',
+                    'h2.text-sm.text-color-text'
+                ];
+                
+                let headlineElJob;
+                for (const selector of headlineSelectors) {
+                    headlineElJob = contentContainer.find(selector);
+                    if (headlineElJob.length > 0) break;
+                }
+                
+                if (headlineElJob && headlineElJob.length > 0) {
+                    adDetail.headline = headlineElJob.text().trim();
+                    log.debug(`Detail Scraper: JOB - Headline: "${adDetail.headline}" for Ad ID: ${adDetail.adId}`);
+                } else {
+                    log.debug(`Detail Scraper: JOB - Headline element not found for Ad ID: ${adDetail.adId}`);
+                }
+
+                // CTA Text and Click URL (button-like anchor)
+                const ctaLinkEl = contentContainer.find('a.btn-sm.btn-secondary-emphasis[data-tracking-control-name="ad_library_ad_detail_cta"]');
+                if (ctaLinkEl.length > 0) {
+                    adDetail.ctaText = ctaLinkEl.text().trim();
+                    const href = ctaLinkEl.attr('href');
+                    if (href) {
+                        adDetail.clickUrl = ensureAbsoluteUrl(href, adDetail.adDetailUrl);
+                    }
+                    log.debug(`Detail Scraper: JOB - CTA: "${adDetail.ctaText}", URL: "${adDetail.clickUrl}" for Ad ID: ${adDetail.adId}`);
+                } else {
+                    log.debug(`Detail Scraper: JOB - CTA link element not found for Ad ID: ${adDetail.adId}`);
+                }
+
+                // Company Logo URL (ensure it's picked up if not already by general logic)
+                if (!adDetail.advertiserLogoUrl) {
+                    const logoImgEl = contentContainer.find('a[data-tracking-control-name="ad_library_ad_preview_advertiser_image"] img');
+                    if (logoImgEl.length > 0) {
+                        let logoSrcAttr = logoImgEl.attr('src');
+                        if (!logoSrcAttr) {
+                            logoSrcAttr = logoImgEl.attr('data-delayed-url') ||
+                                          logoImgEl.attr('data-src') ||
+                                          logoImgEl.attr('data-ghost-url');
+                        }
+                        if (logoSrcAttr) {
+                            adDetail.advertiserLogoUrl = ensureAbsoluteUrl(logoSrcAttr, adDetail.adDetailUrl);
+                            log.debug(`Detail Scraper: JOB - Company logo extracted: ${adDetail.advertiserLogoUrl} for Ad ID: ${adDetail.adId}`);
+                        }
+                    }
+                }
+
+            } else {
+                log.warning(`Detail Scraper: JOB - Could not find content container for Ad ID: ${adDetail.adId}`);
             }
             break;
         }
